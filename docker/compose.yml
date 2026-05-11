@@ -29,8 +29,8 @@ services:
   # ---------------------------------------------------------------------------
   api:
     build:
-      context: ./dockerfiles
-      dockerfile: dockerfile_fastAPI
+      context: ..
+      dockerfile: docker/dockerfiles/dockerfile_fastAPI
     command: uvicorn src.api:app --host 0.0.0.0 --port 8000
     ports:
       - "8000:8000"
