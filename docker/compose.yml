@@ -11,6 +11,7 @@ services:
       - "8000:8000"
     environment:
       DB_CONN: postgresql://${POSTGRES_USER:-vikmar}:${POSTGRES_PASSWORD:-vikmar}@postgres:5432/fastapi_db
+      PREFECT_API_URL: http://prefect:4200/api
     volumes:
       - ../:/app
     depends_on:
