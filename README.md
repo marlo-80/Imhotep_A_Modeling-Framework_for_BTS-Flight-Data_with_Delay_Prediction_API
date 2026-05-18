@@ -25,14 +25,10 @@ When the stack is running, the local endpoints are:
 
 ### First Start only
 At the first start some bootstrapping is needed to dowload the data and setup Postgres SQL. After all services from the initialization have been established execute:<br><br>
-`docker compose -f docker/compose.yml --profile init up -d bootstrap`
+`docker compose -f docker/compose.yml exec api python docker/scripts/bootstrap_db.py`
 
-Data will be downloaded to \repofolder\flight_data and Postgres will be initialised with those data.<br>
-Check the progress with:
-<br><br>
-`docker compose -f docker/compose.yml logs -f bootstrap`
-<br><br>
-Wait until the log shows "Import abgeschlossen. XXXX Zeilen in raw.flights eingefügt."<br>
+Data will be downloaded to \repofolder\flight_data and Postgres will be initialised with those data. The process can take a long time, what until you see the output: <br><br>
+ `"Import abgeschlossen. XXXX Zeilen in raw.flights eingefügt."`<br>
 You can verify the table with:
 <br>
 <br>
