@@ -8,6 +8,7 @@ from src.train import train_and_log, create_model
 from flows.config import OPTUNA_CONFIG
 
 import flows.config as cfg_module
+import sys
 
 @task
 def load_and_prepare_data(config: dict) -> tuple:
