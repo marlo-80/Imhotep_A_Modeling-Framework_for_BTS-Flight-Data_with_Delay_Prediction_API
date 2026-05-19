@@ -7,6 +7,8 @@ from src.preprocessing import build_preprocessor
 from src.train import train_and_log, create_model
 from flows.config import OPTUNA_CONFIG
 
+import flows.config as cfg_module
+
 @task
 def load_and_prepare_data(config: dict) -> tuple:
     """Lädt die Rohdaten, konvertiert Integer und splittet chronologisch."""
@@ -84,4 +86,7 @@ def tuning_pipeline(config: dict = OPTUNA_CONFIG):
     return best_params, best_score
 
 if __name__ == "__main__":
-    tuning_pipeline()
+    # Config-Name über Kommandozeile wählen, z. B. OPTUNA_CONFIG oder MY_TUNE
+    config_name = sys.argv[1] if len(sys.argv) > 1 else "OPTUNA_CONFIG"
+    config = getattr(cfg_module, config_name, OPTUNA_CONFIG)
+    tuning_pipeline(config)
