@@ -41,15 +41,18 @@ def bootstrap():
     print("Importiere Daten aus CSV-Dateien ...")
     from src.data import load_from_local
     from src.data import load_from_kaggle
-    df = load_from_local()
-    
-    print(f"Schreibe {len(df)} Zeilen nach PostgreSQL …")
-    df.to_sql("flights", engine, schema="raw", if_exists="replace", index=False, chunksize=5000)
+    generator = load_from_local()
+
+    len_all = 0
+    for df in generator:    
+        print(f"Schreibe {len(df)} Zeilen nach PostgreSQL …")
+        df.to_sql("flights", engine, schema="raw", if_exists="replace", index=False, chunksize=5000)
+        len_all += len(df)
 
     with engine.connect() as conn:
         conn.execute(text('CREATE INDEX IF NOT EXISTS idx_flight_date ON raw.flights ("FlightDate");'))
         conn.commit()
-    print(f"Import abgeschlossen. {len(df)} Zeilen in raw.flights eingefügt.")
+    print(f"Import abgeschlossen. {len_all} Zeilen in raw.flights eingefügt.")
 
 if __name__ == "__main__":
     bootstrap()

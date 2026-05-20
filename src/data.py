@@ -1,5 +1,6 @@
 import os
 import re
+import sys
 import kagglehub
 import pandas as pd
 
@@ -30,25 +31,27 @@ def load_from_local(path = f"./{DEFAULT_PATH}/")->pd.DataFrame:
     if not os.path.exists(path) or os.listdir(path) == []:
         path = load_from_kaggle(kagglehub_path, output_dir=path)
 
-    df = pd.DataFrame()
+    print(f"Loading data from local path: {path}")
     for file in os.listdir(path):
-        print(f"checking file: {file}")
-        if re.match(r"Combined_Flights_\d{4}\.csv", file) is None:
-            continue
-        print( f"read from file: {file}")
-        df_ = pd.read_csv(os.path.join(path, file), 
+        try:
+            print(f"checking file: {file}")
+            if re.match(r"Combined_Flights_\d{4}\.csv", file) is None:
+                continue
+            print( f"read from file: {file}")
+            df = pd.read_csv(os.path.join(path, file), 
                     usecols=["FlightDate", "Airline", "Origin", "Dest", 
                               "CRSDepTime", "CRSArrTime", "DepDelay", "Diverted", "Cancelled",
                               "Operating_Airline", "OriginCityName", "DestCityName",
                               "Tail_Number", "Flight_Number_Operating_Airline", 
                               "OriginAirportID", "DestAirportID", "DepDelayMinutes", "ArrDelay"])        
+            
+            yield df        
+            #df = pd.concat([df, df_], ignore_index=True)        
+        except Exception as e:
+            print(f"Error reading file {file}: {str(e)}", file=sys.stderr)
+            continue
         
-        df = pd.concat([df, df_], ignore_index=True)        
-        
-    #print(df.head())
-    #print(df.describe())
-    #df.info()
-    return df
+    
 
 
 
