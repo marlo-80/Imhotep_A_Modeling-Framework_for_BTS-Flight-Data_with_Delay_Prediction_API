@@ -9,12 +9,32 @@ WITH cleaned AS (
     FROM {{ source('raw', 'flights') }}
     WHERE "Cancelled" IS FALSE
       AND "Diverted" IS FALSE
+      AND "FlightDate" IS NOT NULL
+      AND "Year" IS NOT NULL                      
+      AND "Quarter" IS NOT NULL                        
+      AND "Month" IS NOT NULL                           
+      AND "DayofMonth" IS NOT NULL                        
+      AND "DayOfWeek" IS NOT NULL                        
       AND "CRSDepTime" IS NOT NULL
+      AND "CRSArrTime" IS NOT NULL          -- wird als Feature genutzt
+      AND "CRSElapsedTime" IS NOT NULL      -- wird als Feature genutzt
       AND "Origin" IS NOT NULL
       AND "Dest" IS NOT NULL
-      AND "Distance" > 0       
+      AND "Distance" > 0
+      -- Alle Zielspalten müssen einen gültigen Wert haben
+      AND "ArrDelay" IS NOT NULL
+      AND "ArrDelayMinutes" IS NOT NULL
+      AND "ArrDel15" IS NOT NULL
+      AND "ArrivalDelayGroups" IS NOT NULL
 )
 SELECT
+  CONCAT(
+      COALESCE("Origin", 'NA'), '_',
+      COALESCE("Dest", 'NA'), '_',
+      TO_CHAR("FlightDate"::date, 'YYYYMMDD'), '_',
+      COALESCE("Operating_Airline", 'NA'), '_',
+      COALESCE("CRSDepTime"::text, '0000')
+  )                                     AS flight_uid,
     -- Date
     "FlightDate"::date                  AS flight_date,
     "Year"                              AS year,
@@ -49,7 +69,5 @@ SELECT
     "ArrDelay"                          AS arr_delay,
     "ArrDelayMinutes"                   AS arr_delay_minutes,
     "ArrDel15"                          AS arr_del15,
-    "ArrivalDelayGroups"                AS arrival_delay_groups,
-    "DepDelay"                          AS dep_delay,
-    "DepDelayMinutes"                   AS dep_delay_minutes
+    "ArrivalDelayGroups"                AS arrival_delay_groups
 FROM cleaned

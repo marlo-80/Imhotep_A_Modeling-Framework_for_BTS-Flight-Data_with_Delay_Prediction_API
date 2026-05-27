@@ -62,18 +62,16 @@ docker compose -f docker/compose.yml exec postgres psql -U vikmar -d fastapi_db 
 <br><br>
 
 ## Creation of dbt models
-Set a random seed to make data sampling reproducable. Unfortunately, dbt models don't have a seed parameter by themself.<br>
-```bash
-docker compose -f docker/compose.yml exec postgres psql -U vikmar -d fastapi_db -c "SELECT setseed(0.42);"
-```
-<br><br>
-Run dbt with default values: Start: 2019-01-01 / Stopp: 2020-01-01 / Sample size: 100k rows):<br>
+Run dbt. Several data models will be build:<br>
 ```bash
 docker compose -f docker/compose.yml exec api dbt run --project-dir /app/dbt --profiles-dir /app/dbt
 ```
+
+You can improve the performance by removing the first double dash (--) in `--AND random() < 0.1` in every file that is in `/dbt/models/training`. However, this will lead to slightly different data in the resulting dbt models. 
+
 <br>
 
-Verification of the dbt model:<br>
+Verification of the dbt model `flights_subset.sql`:<br>
 ```bash 
 docker compose -f docker/compose.yml exec postgres psql -U vikmar -d fastapi_db -c "SELECT COUNT(*), MIN(flight_date), MAX(flight_date) FROM dbt_staging.flights_subset;"
 ```
@@ -141,3 +139,10 @@ The flow of parameter tuning with Optuna is defined in `flows/tune_flow.py`. Ass
 docker compose -f docker/compose.yml exec -e PYTHONPATH=/app -e PYTHONUNBUFFERED=1 api python flows/tune_flow.py NEW_OPTUNA_MODEL
 ``` 
 Results of the training run can  be found in [MLFlow](http://127.0.0.1:5001). Metrics about the model usage can be found in [Grafana](http://127.0.0.1:4200).
+
+
+## How to run the Covid data drift experiment
+Create data sets for pre-Covid flights and intra-Covid flights.
+```bash
+
+```

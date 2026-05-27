@@ -5,9 +5,6 @@ profile: 'flights_dbt'
 models:
   flights_dbt:
     staging:
-      +materialized: view  
-
-vars:
-  start_date: '2018-01-01'
-  end_date: '2019-12-31'
-  sample_size: 100000   
+      +materialized: view
+    training:
+      +materialized: table 

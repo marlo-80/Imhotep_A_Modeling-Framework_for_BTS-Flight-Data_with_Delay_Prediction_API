@@ -17,6 +17,21 @@ DB_NAME = "fastapi_db"
 
 def bootstrap():
     engine = create_engine(f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}")
+    # Create Schema for prediction logging
+    with engine.connect() as conn:
+        conn.execute(text("CREATE SCHEMA IF NOT EXISTS api;"))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS api.predictions (
+                id SERIAL PRIMARY KEY,
+                timestamp TIMESTAMPTZ DEFAULT NOW(),
+                flight_uid TEXT,
+                input_features JSONB,
+                prediction DOUBLE PRECISION,
+                model_version TEXT,
+                ground_truth DOUBLE PRECISION DEFAULT NULL
+            );
+        """))
+        conn.commit()
 
     # Schema raw anlegen, falls nicht vorhanden
     with engine.connect() as conn:

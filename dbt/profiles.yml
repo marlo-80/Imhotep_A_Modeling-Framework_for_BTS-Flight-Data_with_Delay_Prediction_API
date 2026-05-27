@@ -9,5 +9,5 @@ flights_dbt:
       port: 5432
       dbname: fastapi_db
       schema: dbt_staging         # alle dbt‑Modelle landen in diesem Schema
-      threads: 2
+      threads: 1
       keepalives_idle: 0

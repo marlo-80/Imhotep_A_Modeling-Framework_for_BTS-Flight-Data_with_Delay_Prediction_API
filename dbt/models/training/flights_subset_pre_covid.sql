@@ -9,12 +9,13 @@
 }}
 
 
+
 WITH randomized AS (
     SELECT *
     FROM {{ ref('stg_flights') }}
     WHERE flight_date >= '2018-01-01'
-      AND flight_date <  '2019-01-01'
-      --AND random() < 0.1                  -- Umcomment this to improve performance
+      AND flight_date <  '2020-01-01'
+      AND random() < 0.02                  -- Umcomment this to improve performance
     ORDER BY random()
     LIMIT 100000
 )

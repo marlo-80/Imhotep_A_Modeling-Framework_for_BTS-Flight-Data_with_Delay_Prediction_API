@@ -31,7 +31,7 @@ def train_and_log(
     target = config["target"]
 
     # Zielspalte abtrennen
-    X_train = train_df.drop(columns=[target])
+    X_train = train_df.drop(columns=[target]).copy()
     y_train = train_df[target]
     X_val = val_df.drop(columns=[target])
     y_val = val_df[target]
@@ -53,8 +53,8 @@ def train_and_log(
 
     # Optional: binäre Klassifikationsmetriken (Schwellwert 15 Min.)
     threshold = config.get("delay_threshold", 15)
-    y_true_bin = (y_val > threshold).astype(int)
-    y_pred_bin = (preds > threshold).astype(int)
+    y_true_bin = val_df["arr_del15"].astype(int)           # Ground‑Truth aus Daten
+    y_pred_bin = (preds > 15).astype(int)                  # Schwellwert 15 ist fest
     precision = precision_score(y_true_bin, y_pred_bin)
     recall = recall_score(y_true_bin, y_pred_bin)
     f1 = f1_score(y_true_bin, y_pred_bin)
@@ -86,26 +86,27 @@ def train_and_log(
             "recall_15": recall,
             "f1_15": f1,
         })
+
+        feature_cols = config["numeric_cols"] + config["categorical_cols"]
+        X_train[config["numeric_cols"]] = X_train[config["numeric_cols"]].astype(float)
+        X_train_signature = X_train[feature_cols]
+
+
+        artifact_name = config.get("run_name", "full_pipeline")
         mlflow.sklearn.log_model(
             pipeline,
-            name=config.get("run_name", "full_pipeline"),
-            )
+            artifact_path=artifact_name,
+            signature=mlflow.models.infer_signature(X_train_signature, y_train),
+        )
 
         # Optional registrieren, falls in config gewünscht
         if config.get("register", False):
             run_id = mlflow.active_run().info.run_id
-            model_uri = f"runs:/{run_id}/full_pipeline"
+            model_uri = f"runs:/{run_id}/{artifact_name}"
             registered = mlflow.register_model(
                 model_uri,
                 config.get("model_name", "flight-delay-baseline"),
             )
-            if config.get("alias"):
-                client = mlflow.tracking.MlflowClient()
-                client.set_registered_model_alias(
-                    config["model_name"],
-                    config["alias"],
-                    registered.version,
-                )
 
     return pipeline, rmse
 
