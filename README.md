@@ -146,3 +146,62 @@ Create data sets for pre-Covid flights and intra-Covid flights.
 ```bash
 
 ```
+
+
+
+## Miscellaneous
+
+### Recreation of the api.predictions table in PostgreSQL
+
+If you ever need to rebuild the api.predictions table in PostgreSQL, execute these commands: 
+```bash
+docker compose -f docker/compose.yml stop simulator
+```
+
+```bash
+docker compose -f docker/compose.yml exec postgres psql -U vikmar -d fastapi_db -c "DROP TABLE IF EXISTS api.predictions CASCADE;"```
+```
+
+```bash
+docker compose -f docker/compose.yml exec postgres psql -U vikmar -d fastapi_db -c "
+CREATE TABLE api.predictions (
+    id SERIAL PRIMARY KEY,
+    timestamp TIMESTAMPTZ DEFAULT NOW(),
+    flight_uid TEXT,
+    input_features JSONB,
+    prediction_reg DOUBLE PRECISION,
+    prediction_class INTEGER,
+    model_version_reg TEXT,
+    model_version_class TEXT,
+    ground_truth DOUBLE PRECISION DEFAULT NULL
+);
+"
+```
+
+<br><br>
+
+
+### New dbt models
+If you want to create new data sets, define new dbt models in dbt/models/training.
+
+To define which data set is used during model training, change the `dataset_query` in the model defining dictionary in `flows/config.py`.
+
+All other fields in the data section of the config file just serve logging purposes in MLFlow
+
+
+### Check the prediction data base
+To check the number of rows in api.predictions execute:
+```bash
+docker compose -f docker/compose.yml exec postgres psql -U vikmar -d fastapi_db -c "SELECT COUNT(*) FROM api.predictions;"
+```
+
+To see the last 20 line in api-predictions. execute:
+```bash
+docker compose -f docker/compose.yml exec postgres psql -U vikmar -d fastapi_db -c "SELECT * FROM api.predictions ORDER BY timestamp DESC LIMIT 20;"
+```
+
+
+
+
+
+

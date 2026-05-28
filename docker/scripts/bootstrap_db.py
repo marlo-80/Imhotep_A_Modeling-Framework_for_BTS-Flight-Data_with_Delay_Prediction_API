@@ -26,8 +26,10 @@ def bootstrap():
                 timestamp TIMESTAMPTZ DEFAULT NOW(),
                 flight_uid TEXT,
                 input_features JSONB,
-                prediction DOUBLE PRECISION,
-                model_version TEXT,
+                prediction_reg DOUBLE PRECISION,
+                prediction_class INTEGER,
+                model_version_reg TEXT,
+                model_version_class TEXT,
                 ground_truth DOUBLE PRECISION DEFAULT NULL
             );
         """))

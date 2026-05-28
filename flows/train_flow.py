@@ -15,6 +15,10 @@ from mlflow.tracking import MlflowClient
 import httpx
 from mlflow.tracking import MlflowClient
 
+from src.train import create_model
+
+import mlflow
+
 
 @task
 def load_and_clean_data(query: str, numeric_cols: list[str]) -> pd.DataFrame:
@@ -33,11 +37,11 @@ def split_data(df: pd.DataFrame, target: str) -> tuple:
     test  = df.iloc[val_end:]
     return train, val, test
 
-@task
-def build_model(model_type: str, model_params: dict):
-    if model_type == "RandomForestRegressor":
-        return RandomForestRegressor(**model_params)
-    raise ValueError(f"Unbekannter model_type: {model_type}")
+#@task
+#def build_model(model_type: str, model_params: dict):
+#    if model_type == "RandomForestRegressor":
+#        return RandomForestRegressor(**model_params)
+#    raise ValueError(f"Unbekannter model_type: {model_type}")
 
 @task
 def run_training(train_df, val_df, config: dict):
@@ -48,69 +52,92 @@ def run_training(train_df, val_df, config: dict):
         impute_num=config.get("impute_num", "median"),
         impute_cat=config.get("impute_cat", "most_frequent"),
     )
-    model = build_model.fn(config["model_type"], config["model_params"])
+    model = create_model(config["model_type"], config["model_params"])
 
-    pipeline, rmse = train_and_log(train_df, val_df, preprocessor, model, config)
-    return pipeline, rmse
+    pipeline, score, run_id, artifact_name = train_and_log(train_df, val_df, preprocessor, model, config)
+    return pipeline, score, run_id, artifact_name
 
 @task
-def promote_if_better(config: dict, new_rmse: float):
-    """
-    Vergleicht die RMSE des neuen Modells mit dem aktuellen Champion (falls vorhanden)
-    und setzt den Alias nur, wenn das neue Modell besser ist.
-    Triggert danach den API‑Webhook zum Neuladen.
-    """
+def promote_if_better(config: dict, new_score: float, run_id: str, artifact_name: str):
     model_name = config.get("model_name")
     alias = config.get("alias")
-    if not alias or not config.get("register", False):
-        return  # Kein Alias gewünscht → nichts tun
+    if not alias or not model_name:
+        return
 
     client = MlflowClient()
-    # Aktuellen Champion suchen
+    metric_name = config.get("promotion_metric", "rmse")
+    mode = config.get("promotion_mode", "minimize")
+    current_score = None
+
     try:
         current_mv = client.get_model_version_by_alias(model_name, alias)
-        # RMSE des aktuellen Champions aus dessen Run holen
         current_run = client.get_run(current_mv.run_id)
-        current_rmse = current_run.data.metrics.get("rmse", None)
+        current_score = current_run.data.metrics.get(metric_name)
     except Exception:
-        current_rmse = None
+        pass
 
-    # Entscheiden, ob das neue Modell den Champion ersetzen soll
-    promote = False
-    if current_rmse is None:
-        promote = True          # Noch kein Champion
+    # Vergleich durchführen (immer)
+    if current_score is None:
+        is_better = True
+        comp_str = f"{new_score:.4f} (noch kein Champion)"
+    elif mode == "minimize":
+        is_better = new_score < current_score
+        comp_str = f"{new_score:.4f} vs. Champion {current_score:.4f}"
     else:
-        # Besser = kleinerer RMSE
-        if new_rmse < current_rmse:
-            promote = True
+        is_better = new_score > current_score
+        comp_str = f"{new_score:.4f} vs. Champion {current_score:.4f}"
 
-    if promote:
-        # Alias auf neue Version setzen (die zuletzt registrierte)
-        new_mv = client.get_latest_versions(model_name, stages=["None"])[0]
-        client.set_registered_model_alias(model_name, alias, new_mv.version)
-        print(f"Neuer Champion: {model_name} v{new_mv.version} (RMSE {new_rmse:.2f}), Alter Champion: (RMSE {current_rmse:.2f})")
-        # API‑Reload triggern
-        api_url = "http://api:8000/admin/reload-model"   # intern im Docker‑Netz
+    if is_better:
+        print(f"Besser: {metric_name} {comp_str} → wird registriert und zum Champion.")
+        model_uri = f"runs:/{run_id}/{artifact_name}"
         try:
-            requests.post(api_url, timeout=5)
+            client.get_model_version_by_alias(model_name, alias)  # prüfen, ob Champion existiert
+        except Exception:
+            pass  # kein Champion, einfach registrieren
+        registered = mlflow.register_model(model_uri, model_name)
+
+        # Nach erfolgreicher Registrierung
+        run = client.get_run(run_id)
+        metrics = run.data.metrics
+
+        # Wichtige Metriken als Tags setzen
+        important = ["rmse", "mae", "f1", "accuracy"]
+        for key in important:
+            if key in metrics:
+                client.set_model_version_tag(model_name, registered.version, key, str(metrics[key]))
+
+        # Beschreibung mit einer Kurzfassung
+        desc_parts = []
+        for key in important:
+            if key in metrics:
+                desc_parts.append(f"{key}={metrics[key]:.4f}")
+        desc = ", ".join(desc_parts)
+        client.update_model_version(model_name, registered.version, description=desc)
+
+        client.set_registered_model_alias(model_name, alias, registered.version)
+        print(f"Neuer Champion: {model_name} v{registered.version}")
+        try:
+            requests.post("http://api:8000/admin/reload-model", timeout=5)
         except Exception as e:
             print(f"Webhook failed: {e}")
     else:
-        print(f"Kein Wechsel – Champion RMSE {current_rmse:.2f}, Challenger RMSE {new_rmse:.2f}")
+        print(f"Nicht besser: {metric_name} {comp_str}.")
+        if config.get("register", False):
+            model_uri = f"runs:/{run_id}/{artifact_name}"
+            registered = mlflow.register_model(model_uri, model_name)
+            print(f"Modell registriert (ohne Alias): {model_name} v{registered.version}")
+        else:
+            print("Registrierung nicht aktiv – Modell wird nicht registriert.")
 
 
 @flow(name="flight-delay-training")
 def training_pipeline(config: dict = DEFAULT_CONFIG):
     df = load_and_clean_data(config["dataset_query"], config["numeric_cols"])
     train, val, test = split_data(df, config["target"])
-    pipeline, rmse = run_training(train, val, config)   # run_training muss den rmse zurückgeben!
+    pipeline, score, run_id, artifact_name = run_training(train, val, config)   # run_training muss den rmse zurückgeben!
     if config.get("alias"):                              # nur wenn Alias gesetzt
-        promote_if_better(config, rmse)
+        promote_if_better(config, score, run_id, artifact_name)
     return pipeline
-
-
-
-
 
 
 
