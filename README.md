@@ -140,6 +140,7 @@ docker compose -f docker/compose.yml exec -e PYTHONPATH=/app -e PYTHONUNBUFFERED
 ``` 
 Results of the training run can  be found in [MLFlow](http://127.0.0.1:5001). Metrics about the model usage can be found in [Grafana](http://127.0.0.1:4200).
 
+<br><br>
 
 ## How to run the Covid data drift experiment
 Create data sets for pre-Covid flights and intra-Covid flights.
@@ -147,7 +148,7 @@ Create data sets for pre-Covid flights and intra-Covid flights.
 
 ```
 
-
+<br><br>
 
 ## Miscellaneous
 
@@ -188,8 +189,9 @@ To define which data set is used during model training, change the `dataset_quer
 
 All other fields in the data section of the config file just serve logging purposes in MLFlow
 
+<br>
 
-### Check the prediction data base
+### Check of the prediction data base
 To check the number of rows in api.predictions execute:
 ```bash
 docker compose -f docker/compose.yml exec postgres psql -U vikmar -d fastapi_db -c "SELECT COUNT(*) FROM api.predictions;"
@@ -200,7 +202,18 @@ To see the last 20 line in api-predictions. execute:
 docker compose -f docker/compose.yml exec postgres psql -U vikmar -d fastapi_db -c "SELECT * FROM api.predictions ORDER BY timestamp DESC LIMIT 20;"
 ```
 
+<br>
 
+### Filling the prediction data base fastly
+
+If you want to fill api.predictions directly without using the API, you can use the `batch_injector.py` script.
+
+It will use the intra-covid data set to write predictions directly into the data base. The command expects the start-date the end-date and the number of predictions you want to process.
+
+This is an example: 
+```bash
+docker compose -f docker/compose.yml exec -e PYTHONPATH=/app api python docker/scripts/batch_inject.py 2020-04-01 2020-10-01 1000
+```
 
 
 
