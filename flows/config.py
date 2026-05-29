@@ -169,7 +169,7 @@ REG_OPTUNA = {
     "target_type": "continuous",
 
     # Optuna
-    "n_trials": 2,
+    "n_trials": 20,
     "tuning_metric": "rmse",
     "tuning_direction": "minimize",
 

@@ -49,7 +49,7 @@ watch -n 5 "docker compose -f docker/compose.yml exec postgres psql -U vikmar -d
 Windows
 Linux/"Mac"
 ```bash
-while -n 5 "docker compose -f docker/compose.yml exec postgres psql -U vikmar -d fastapi_db -c \"SELECT pg_size_pretty(pg_database_size('fastapi_db')) AS size;\""
+while ($true) { Clear-Host; docker compose -f docker/compose.yml exec postgres psql -U vikmar -d fastapi_db -c "SELECT pg_size_pretty(pg_database_size('fastapi_db')) AS size;"; Start-Sleep -Seconds 5 }
 ```
 
 
