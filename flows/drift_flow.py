@@ -15,7 +15,9 @@ from sklearn.metrics import (
     accuracy_score,
     precision_score,
     recall_score,
+    r2_score,                  # ← neu
 )
+from scipy.stats import skew   # ← neu
 
 DB_URI = "postgresql://vikmar:vikmar@postgres:5432/fastapi_db"
 MLFLOW_URI = "http://mlflow:5000"
@@ -27,7 +29,6 @@ def load_reference_data():
     engine = create_engine(DB_URI)
     query = "SELECT * FROM dbt_staging.flights_subset_pre_covid"
     df = pd.read_sql(query, engine)
-    # Zielspalten und Identifikatoren entfernen – wir vergleichen nur Features
     drop_cols = [
         "arr_delay_minutes", "arr_del15", "arr_delay", "dep_delay",
         "dep_delay_minutes", "flight_uid", "flight_date",
@@ -85,7 +86,6 @@ def load_current_predictions():
         LIMIT 5000
     """
     df = pd.read_sql(query, engine)
-    # ground_truth ist JSONB → in Spalten zerlegen
     df["true_reg"]   = df["ground_truth"].apply(lambda x: x.get("arr_delay_minutes") if x else None)
     df["true_class"] = df["ground_truth"].apply(lambda x: x.get("arr_del15") if x else None)
     df = df.dropna(subset=["true_reg", "true_class"])
@@ -95,13 +95,14 @@ def load_current_predictions():
 
 @task
 def compute_and_send_metrics(preds_df: pd.DataFrame):
-    """Berechnet MAE, RMSE, Klassifikationsmetriken, Specificity, Top‑Airport und gibt alles zurück."""
+    """Berechnet alle Drift‑ und Performance‑Metriken des aktuellen Batches."""
     if preds_df.empty:
         mae = rmse = actual_rate = predicted_rate = 0.0
         class_f1 = class_roc_auc = class_accuracy = 0.0
         class_precision = class_recall = class_specificity = 0.0
         rate_delta = 0.0
         top_origin = 0.0
+        r2 = residual_skewness = rolling_std = 0.0
     else:
         y_true_reg = preds_df["true_reg"]
         y_pred_reg = preds_df["prediction_reg"]
@@ -111,6 +112,12 @@ def compute_and_send_metrics(preds_df: pd.DataFrame):
         # Regression
         mae = float(np.mean(np.abs(y_pred_reg - y_true_reg)))
         rmse = float(np.sqrt(np.mean((y_pred_reg - y_true_reg) ** 2)))
+        r2 = float(r2_score(y_true_reg, y_pred_reg))
+        residuals = y_true_reg - y_pred_reg
+        residual_skewness = float(skew(residuals))
+
+        # Rollierende Standardabweichung der letzten 100 Regressionsvorhersagen
+        rolling_std = float(preds_df["prediction_reg"].tail(100).std()) if len(preds_df) >= 100 else float(preds_df["prediction_reg"].std())
 
         # Raten
         actual_rate    = float(y_true_cls.mean())
@@ -142,13 +149,15 @@ def compute_and_send_metrics(preds_df: pd.DataFrame):
     # NaN/Inf abfangen
     for var in [mae, rmse, actual_rate, predicted_rate, class_f1,
                 class_roc_auc, class_accuracy, class_precision, class_recall,
-                class_specificity, rate_delta, top_origin]:
+                class_specificity, rate_delta, top_origin,
+                r2, residual_skewness, rolling_std]:
         if var is None or np.isnan(var) or np.isinf(var):
             var = 0.0
 
     return (mae, rmse, actual_rate, predicted_rate,
             class_f1, class_roc_auc, class_accuracy, class_precision,
-            class_recall, class_specificity, rate_delta, top_origin)
+            class_recall, class_specificity, rate_delta, top_origin,
+            r2, residual_skewness, rolling_std)
 
 
 @task
@@ -180,7 +189,7 @@ def drift_detection_flow():
     num_cols = current.select_dtypes(include=[np.number]).columns
     valid_num = [col for col in num_cols if current[col].std() > 0.01]
     str_cols = current.select_dtypes(include=[object]).columns.tolist()
-    valid_cols = valid_num + str_cols   # Strings immer behalten – Evidently kann damit umgehen
+    valid_cols = valid_num + str_cols
     reference = reference[valid_cols]
     current = current[valid_cols]
     print(f"Spalten für Drift-Analyse: {valid_cols}")
@@ -202,9 +211,10 @@ def drift_detection_flow():
     preds_df = load_current_predictions()
     (mae, rmse, actual_rate, predicted_rate,
      class_f1, class_roc_auc, class_accuracy, class_precision,
-     class_recall, class_specificity, rate_delta, top_origin) = compute_and_send_metrics(preds_df)
+     class_recall, class_specificity, rate_delta, top_origin,
+     r2, residual_skewness, rolling_std) = compute_and_send_metrics(preds_df)
 
-    # Top‑Airlines berechnen (benötigt den Classifier-Predictions aus preds_df)
+    # Top‑Airlines berechnen
     cls_preds = preds_df["prediction_class"].values if not preds_df.empty else []
     top_airlines = compute_top_airlines(current, cls_preds)
 
@@ -231,6 +241,9 @@ def drift_detection_flow():
                 "class_specificity": class_specificity,
                 "rate_delta": rate_delta,
                 "top_delay_airport": top_origin,
+                "r2": r2,
+                "residual_skewness": residual_skewness,
+                "stddev_rolling": rolling_std,
             },
             timeout=10,
         )

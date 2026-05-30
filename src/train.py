@@ -14,7 +14,8 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 import os
-
+import numpy as np
+from scipy.stats import skew
 from sklearn.metrics import confusion_matrix
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -65,24 +66,32 @@ def train_and_log(
         f1 = f1_score(y_val_class, y_pred_class)
         roc_auc = roc_auc_score(y_val_class, y_pred_proba)
 
-        # Wichtig: metrics zuerst bauen ...
+        # Specificity (True Negative Rate)
+        tp = ((y_val_class == 1) & (y_pred_class == 1)).sum()
+        tn = ((y_val_class == 0) & (y_pred_class == 0)).sum()
+        fp = ((y_val_class == 0) & (y_pred_class == 1)).sum()
+        specificity = tn / (tn + fp) if (tn + fp) > 0 else 0.0
+
+        # Mittlere Confidence (Klasse 1)
+        confidence_mean = float(np.mean(y_pred_proba))
+
         metrics = {
             "accuracy": accuracy,
             "precision": precision,
             "recall": recall,
             "f1": f1,
             "roc_auc": roc_auc,
+            "specificity": specificity,
+            "confidence_mean": confidence_mean,
         }
 
-        # ... dann den Score daraus ableiten
         if "tuning_metric" in config:
             score = config["tuning_metric"]
         else:
             score = config.get("promotion_metric", "f1")
-
         score_value = metrics.get(score, list(metrics.values())[0])
 
-        # Confusion Matrix erstellen
+        # Confusion Matrix
         cm = confusion_matrix(y_val_class, y_pred_class)
         fig_cm, ax_cm = plt.subplots()
         sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", ax=ax_cm)
@@ -104,21 +113,25 @@ def train_and_log(
         medae = median_absolute_error(y_val, preds)
         r2 = r2_score(y_val, preds)
 
+        # Residual‑Schiefe
+        residuals = y_val - preds
+        residual_skewness = float(skew(residuals))
+
         y_true_bin = val_df["arr_del15"].astype(int)
         y_pred_bin = (preds > 15).astype(int)
         precision = precision_score(y_true_bin, y_pred_bin)
         recall = recall_score(y_true_bin, y_pred_bin)
         f1 = f1_score(y_true_bin, y_pred_bin)
         accuracy = accuracy_score(y_true_bin, y_pred_bin)
-        roc_auc  = roc_auc_score(y_true_bin, preds)   # preds sind die stetigen Scores
+        roc_auc  = roc_auc_score(y_true_bin, preds)
 
-        # Wichtig: metrics zuerst bauen ...
         metrics = {
             "mae": mae,
             "mse": mse,
             "rmse": rmse,
             "medae": medae,
             "r2": r2,
+            "residual_skewness": residual_skewness,
             "accuracy": accuracy,
             "precision": precision,
             "recall": recall,
@@ -126,15 +139,13 @@ def train_and_log(
             "roc_auc": roc_auc,
         }
 
-        # ... dann den Score daraus ableiten
         if "tuning_metric" in config:
             score = config["tuning_metric"]
         else:
             score = config.get("promotion_metric", "rmse")
-
         score_value = metrics.get(score, list(metrics.values())[0])
 
-    # Alles in einem Run loggen (nur ein start_run!)
+    # Alles in einem Run loggen
     with mlflow.start_run(run_name=config.get("run_name", "custom_run")):
         # Dataset-Logging
         dataset = mlflow.data.from_pandas(

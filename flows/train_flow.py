@@ -37,12 +37,6 @@ def split_data(df: pd.DataFrame, target: str) -> tuple:
     test  = df.iloc[val_end:]
     return train, val, test
 
-#@task
-#def build_model(model_type: str, model_params: dict):
-#    if model_type == "RandomForestRegressor":
-#        return RandomForestRegressor(**model_params)
-#    raise ValueError(f"Unbekannter model_type: {model_type}")
-
 @task
 def run_training(train_df, val_df, config: dict):
     # Preprocessor und Modell erstellen
@@ -97,62 +91,54 @@ def promote_if_better(config: dict, new_score: float, run_id: str, artifact_name
         print(f"Besser: {metric_name} {comp_str} → wird registriert und zum Champion.")
         model_uri = f"runs:/{run_id}/{artifact_name}"
         try:
-            client.get_model_version_by_alias(model_name, alias)  # prüfen, ob Champion existiert
+            client.get_model_version_by_alias(model_name, alias)
         except Exception:
-            pass  # kein Champion, einfach registrieren
+            pass
         registered = mlflow.register_model(model_uri, model_name)
 
-        # Nach erfolgreicher Registrierung
+        # Run-Metriken holen
         run = client.get_run(run_id)
         metrics = run.data.metrics
 
-        # Wichtige Metriken als Tags setzen
-        important = ["rmse", "mae", "f1", "accuracy"]
+        # Tags und Beschreibung setzen
+        important = ["rmse", "mae", "f1", "accuracy", "r2", "specificity"]
         for key in important:
             if key in metrics:
                 client.set_model_version_tag(model_name, registered.version, key, str(metrics[key]))
-
-        # Beschreibung mit einer Kurzfassung
-        desc_parts = []
-        for key in important:
-            if key in metrics:
-                desc_parts.append(f"{key}={metrics[key]:.4f}")
-        desc = ", ".join(desc_parts)
-        client.update_model_version(model_name, registered.version, description=desc)
+        desc_parts = [f"{k}={metrics[k]:.4f}" for k in important if k in metrics]
+        client.update_model_version(model_name, registered.version, description=", ".join(desc_parts))
 
         client.set_registered_model_alias(model_name, alias, registered.version)
         print(f"Neuer Champion: {model_name} v{registered.version}")
+
+        # Champion-Metriken dynamisch an die API senden (nur vorhandene)
+        champion_payload = {}
+        # Regressor
+        for key, api_key in [("rmse", "regressor_rmse"), ("mae", "regressor_mae"),
+                             ("r2", "regressor_r2"), ("residual_skewness", "regressor_residual_skewness")]:
+            if key in metrics:
+                champion_payload[api_key] = metrics[key]
+        # Classifier
+        for key, api_key in [("f1", "classifier_f1"), ("roc_auc", "classifier_roc_auc"),
+                             ("accuracy", "classifier_accuracy"), ("precision", "classifier_precision"),
+                             ("recall", "classifier_recall"), ("specificity", "classifier_specificity"),
+                             ("confidence_mean", "classifier_confidence_mean")]:
+            if key in metrics:
+                champion_payload[api_key] = metrics[key]
+
+        if champion_payload:
+            try:
+                requests.post("http://api:8000/admin/champion-metrics", json=champion_payload, timeout=5)
+                print("Champion-Metriken an API gesendet.")
+            except Exception as e:
+                print(f"Fehler beim Setzen der Champion-Metriken: {e}")
+
+        # API‑Reload triggern
         try:
             requests.post("http://api:8000/admin/reload-model", timeout=5)
         except Exception as e:
             print(f"Webhook failed: {e}")
 
-        run = client.get_run(run_id)
-        metrics = run.data.metrics
-        reg_rmse = metrics.get("rmse", 0.0)
-        reg_mae  = metrics.get("mae", 0.0)
-        cls_f1       = metrics.get("f1", 0.0)
-        cls_roc_auc  = metrics.get("roc_auc", 0.0)
-        cls_accuracy = metrics.get("accuracy", 0.0)
-        cls_precision = metrics.get("precision", 0.0)
-        cls_recall   = metrics.get("recall", 0.0)
-
-        try:
-            requests.post(
-                "http://api:8000/admin/champion-metrics",
-                json={
-                    "regressor_rmse": reg_rmse,
-                    "regressor_mae": reg_mae,
-                    "classifier_f1": cls_f1,
-                    "classifier_roc_auc": cls_roc_auc,
-                    "classifier_accuracy": cls_accuracy,
-                    "classifier_precision": cls_precision,
-                    "classifier_recall": cls_recall,
-                },
-                timeout=5,
-            )
-        except Exception as e:
-            print(f"Fehler beim Setzen der Champion-Metriken: {e}")
     else:
         print(f"Nicht besser: {metric_name} {comp_str}.")
         if config.get("register", False):
@@ -174,11 +160,10 @@ def training_pipeline(config: dict = DEFAULT_CONFIG):
     )
     df = load_and_clean_data(config["dataset_query"], all_cols)
     train, val, test = split_data(df, config["target"])
-    pipeline, score, run_id, artifact_name = run_training(train, val, config)   # run_training muss den rmse zurückgeben!
-    if config.get("alias"):                              # nur wenn Alias gesetzt
+    pipeline, score, run_id, artifact_name = run_training(train, val, config)
+    if config.get("alias"):
         promote_if_better(config, score, run_id, artifact_name)
     return pipeline
-
 
 
 if __name__ == "__main__":
@@ -188,4 +173,4 @@ if __name__ == "__main__":
     config_name = sys.argv[1] if len(sys.argv) > 1 else "DEFAULT_CONFIG"
     import flows.config as cfg_module
     config = getattr(cfg_module, config_name, DEFAULT_CONFIG)
-    training_pipeline(config)        
+    training_pipeline(config)

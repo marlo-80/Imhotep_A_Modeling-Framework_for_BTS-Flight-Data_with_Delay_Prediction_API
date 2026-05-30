@@ -140,7 +140,7 @@ CLASS = {
 
     # Modell
     "model_type": "RandomForestClassifier",
-    "model_params": {"n_estimators": 200, "max_depth": 10, "class_weight": "balanced", "random_state": 42},
+    "model_params": {"n_estimators": 20, "max_depth": 2, "class_weight": "balanced", "random_state": 42},
 
     # Daten (nur Logging)
     "dataset_query": "SELECT * FROM dbt_staging.flights_subset_pre_covid",
@@ -163,13 +163,13 @@ CLASS = {
 #                                         Optuna Regression                                          #
 ######################################################################################################
 
-REG_OPTUNA = {
+OPTUNA_REG = {
     "run_name": "optuna_rf_reg",
     "task": "regression",
     "target_type": "continuous",
 
     # Optuna
-    "n_trials": 20,
+    "n_trials": 3,
     "tuning_metric": "rmse",
     "tuning_direction": "minimize",
 
@@ -203,8 +203,8 @@ REG_OPTUNA = {
     # Modell
     "model_type": "RandomForestRegressor",
     "param_ranges": {
-        "n_estimators": {"type": "int", "low": 50, "high": 300},
-        "max_depth":     {"type": "int", "low": 5, "high": 20},
+        "n_estimators": {"type": "int", "low": 5, "high": 30},
+        "max_depth":     {"type": "int", "low": 2, "high": 5},
     },
     "fixed_model_params": {"random_state": 42},
 
@@ -229,13 +229,13 @@ REG_OPTUNA = {
 #                                         Optuna Classification                                      #
 ######################################################################################################
 
-CLASS_OPTUNA = {
+OPTUNA_CLASS = {
     "run_name": "optuna_rf_class",
     "task": "classification",
     "target_type": "binary",
 
     # Optuna
-    "n_trials": 30,
+    "n_trials": 3,
     "tuning_metric": "precision",
     "tuning_direction": "maximize",
 
@@ -269,8 +269,8 @@ CLASS_OPTUNA = {
     # Modell
     "model_type": "RandomForestClassifier",
     "param_ranges": {
-        "n_estimators": {"type": "int", "low": 50, "high": 400},
-        "max_depth":     {"type": "int", "low": 5, "high": 25},
+        "n_estimators": {"type": "int", "low": 5, "high": 40},
+        "max_depth":     {"type": "int", "low": 1, "high": 5},
     },
     "fixed_model_params": {"class_weight": "balanced", "random_state": 42},
 

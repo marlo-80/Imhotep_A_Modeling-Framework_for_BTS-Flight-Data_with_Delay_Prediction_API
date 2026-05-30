@@ -240,9 +240,7 @@ curl -s "http://localhost:9090/api/v1/query?query=data_drift_score"
 ```
 
 
-
-
-
+```bash
 
 docker compose -f docker/compose.yml exec api python -c "
 import mlflow, requests, json
@@ -275,3 +273,28 @@ if payload:
 else:
     print('Keine Metriken gefunden.')
 "
+```
+
+
+
+```bash
+./docker/scripts/demo_drift.sh  
+```
+
+```bash
+docker compose -f docker/compose.yml exec -e PYTHONPATH=/app -e PYTHONUNBUFFERED=1 api python flows/drift_flow.py
+
+```
+
+```bash
+curl -s "http://localhost:9090/api/v1/query?query=data_drift_score"  
+```
+
+```bash
+docker compose -f docker/compose.yml exec -e PYTHONPATH=/app api python docker/scripts/batch_inject.py 2018-01-01 2020-01-01 40000 dbt_staging.flights_subset_pre_covid
+
+```
+
+```bash
+
+```
