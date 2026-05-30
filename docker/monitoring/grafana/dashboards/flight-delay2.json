@@ -24,7 +24,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "b81a53b7-934d-416c-aa6f-e8dda6237556"
+        "uid": "fc8d2040-1274-4cc7-8114-f373eeaf10f3"
       },
       "fieldConfig": {
         "defaults": {
@@ -100,7 +100,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "b81a53b7-934d-416c-aa6f-e8dda6237556"
+            "uid": "fc8d2040-1274-4cc7-8114-f373eeaf10f3"
           },
           "editorMode": "code",
           "expr": "rate(http_requests_total[5m])",
@@ -115,7 +115,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "b81a53b7-934d-416c-aa6f-e8dda6237556"
+        "uid": "fc8d2040-1274-4cc7-8114-f373eeaf10f3"
       },
       "fieldConfig": {
         "defaults": {
@@ -191,7 +191,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "b81a53b7-934d-416c-aa6f-e8dda6237556"
+            "uid": "fc8d2040-1274-4cc7-8114-f373eeaf10f3"
           },
           "editorMode": "code",
           "expr": "rate(http_request_duration_seconds_sum[5m]) / rate(http_request_duration_seconds_count[5m])",
@@ -206,7 +206,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "b81a53b7-934d-416c-aa6f-e8dda6237556"
+        "uid": "fc8d2040-1274-4cc7-8114-f373eeaf10f3"
       },
       "fieldConfig": {
         "defaults": {
@@ -282,7 +282,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "b81a53b7-934d-416c-aa6f-e8dda6237556"
+            "uid": "fc8d2040-1274-4cc7-8114-f373eeaf10f3"
           },
           "editorMode": "code",
           "expr": "sum(rate(http_requests_total{status=~\"4..|5..\"}[5m])) by (handler)",

@@ -235,8 +235,8 @@ CLASS_OPTUNA = {
     "target_type": "binary",
 
     # Optuna
-    "n_trials": 20,
-    "tuning_metric": "f1",
+    "n_trials": 30,
+    "tuning_metric": "precision",
     "tuning_direction": "maximize",
 
     # Preprocessing
@@ -269,8 +269,8 @@ CLASS_OPTUNA = {
     # Modell
     "model_type": "RandomForestClassifier",
     "param_ranges": {
-        "n_estimators": {"type": "int", "low": 50, "high": 300},
-        "max_depth":     {"type": "int", "low": 5, "high": 15},
+        "n_estimators": {"type": "int", "low": 50, "high": 400},
+        "max_depth":     {"type": "int", "low": 5, "high": 25},
     },
     "fixed_model_params": {"class_weight": "balanced", "random_state": 42},
 
@@ -287,7 +287,7 @@ CLASS_OPTUNA = {
     "register": False,
     "model_name": "classifier",
     "alias": "champion",
-    "promotion_metric": "f1",
+    "promotion_metric": "precision",
     "promotion_mode": "maximize",
 }
 

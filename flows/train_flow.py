@@ -126,6 +126,33 @@ def promote_if_better(config: dict, new_score: float, run_id: str, artifact_name
             requests.post("http://api:8000/admin/reload-model", timeout=5)
         except Exception as e:
             print(f"Webhook failed: {e}")
+
+        run = client.get_run(run_id)
+        metrics = run.data.metrics
+        reg_rmse = metrics.get("rmse", 0.0)
+        reg_mae  = metrics.get("mae", 0.0)
+        cls_f1       = metrics.get("f1", 0.0)
+        cls_roc_auc  = metrics.get("roc_auc", 0.0)
+        cls_accuracy = metrics.get("accuracy", 0.0)
+        cls_precision = metrics.get("precision", 0.0)
+        cls_recall   = metrics.get("recall", 0.0)
+
+        try:
+            requests.post(
+                "http://api:8000/admin/champion-metrics",
+                json={
+                    "regressor_rmse": reg_rmse,
+                    "regressor_mae": reg_mae,
+                    "classifier_f1": cls_f1,
+                    "classifier_roc_auc": cls_roc_auc,
+                    "classifier_accuracy": cls_accuracy,
+                    "classifier_precision": cls_precision,
+                    "classifier_recall": cls_recall,
+                },
+                timeout=5,
+            )
+        except Exception as e:
+            print(f"Fehler beim Setzen der Champion-Metriken: {e}")
     else:
         print(f"Nicht besser: {metric_name} {comp_str}.")
         if config.get("register", False):

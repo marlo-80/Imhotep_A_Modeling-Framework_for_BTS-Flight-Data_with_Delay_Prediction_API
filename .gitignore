@@ -14,3 +14,4 @@ discussion.md
 .python-version
 .venv/
 requirements_local.txt
+code_dump.txt

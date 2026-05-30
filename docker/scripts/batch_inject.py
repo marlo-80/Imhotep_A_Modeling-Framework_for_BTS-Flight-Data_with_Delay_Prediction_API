@@ -1,32 +1,34 @@
 # docker/scripts/batch_inject.py
 import sys
 import pandas as pd
+import numpy as np
 import mlflow
+from mlflow.types import DataType
 from sqlalchemy import create_engine, text
 import json
 
 # --- Parameter -------------------------------------------------------------
-if len(sys.argv) != 4:
-    print("Usage: batch_inject.py <start_date> <end_date> <approx_rows>")
+if len(sys.argv) < 4 or len(sys.argv) > 5:
+    print("Usage: batch_inject.py <start_date> <end_date> <approx_rows> [source_table]")
     sys.exit(1)
 
-start_date = sys.argv[1]
-end_date   = sys.argv[2]
-approx_rows = int(sys.argv[3])
+start_date   = sys.argv[1]
+end_date     = sys.argv[2]
+approx_rows  = int(sys.argv[3])
+SOURCE_TABLE = sys.argv[4] if len(sys.argv) == 5 else "dbt_staging.flights_subset_intra_covid"
+
+print(f"Lade exakt {approx_rows} Zeilen aus {SOURCE_TABLE} (Zeitraum {start_date} – {end_date}) ...")
 
 # --- Konfiguration ---------------------------------------------------------
 MLFLOW_URI = "http://mlflow:5000"
 DB_URI = "postgresql://vikmar:vikmar@postgres:5432/fastapi_db"
-SOURCE_TABLE = "dbt_staging.flights_subset_intra_covid"
-
-print(f"Lade exakt {approx_rows} Zeilen aus {SOURCE_TABLE} (Zeitraum {start_date} – {end_date}) ...")
 
 # --- Modelle laden ---------------------------------------------------------
 mlflow.set_tracking_uri(MLFLOW_URI)
 reg = mlflow.pyfunc.load_model("models:/regressor@champion")
 cls = mlflow.pyfunc.load_model("models:/classifier@champion")
 
-# --- Daten mit ORDER BY random() + LIMIT laden -----------------------------
+# --- Daten laden -----------------------------------------------------------
 engine = create_engine(DB_URI)
 query = f"""
     SELECT *
@@ -39,39 +41,78 @@ query = f"""
 df = pd.read_sql(query, engine)
 print(f"Geladene Zeilen: {len(df)}")
 
-# --- Features auf Modell-Spalten reduzieren --------------------------------
-feature_cols = [
-    "year", "quarter", "month", "day_of_month", "day_of_week",
-    "crs_dep_time", "crs_arr_time", "crs_elapsed_time",
-    "distance", "distance_group",
-]
+# --- Ground‑Truth sichern ---------------------------------------------------
+true_reg   = df["arr_delay_minutes"]
+true_class = df["arr_del15"]
 uids = df["flight_uid"].copy()
-features = df[feature_cols].astype(float)
 
-# --- Batch-Predictions -----------------------------------------------------
+# --- Feature‑Spalten dynamisch aus den Signaturen holen --------------------
+def get_feature_columns(signature):
+    return [col.name for col in signature.inputs.inputs]
+
+feature_cols_reg = get_feature_columns(reg.metadata.signature)
+feature_cols_cls = get_feature_columns(cls.metadata.signature)
+
+print(f"Features Regressor : {feature_cols_reg}")
+print(f"Features Classifier: {feature_cols_cls}")
+
+# Alle jemals benötigten Features für das Logging vereinigen
+union_features = sorted(set(feature_cols_reg) | set(feature_cols_cls))
+
+# DataFrames bauen
+features_all = df[union_features]          # für das Logging
+features_reg = df[feature_cols_reg]        # nur Regressor‑Features
+features_cls = df[feature_cols_cls]        # nur Classifier‑Features
+
+# --- Hilfsfunktion: Schema-Enforcement -------------------------------------
+def enforce_schema(df: pd.DataFrame, signature) -> pd.DataFrame:
+    """Konvertiert alle Spalten eines DataFrame exakt in die von der MLflow-Signatur verlangten Typen."""
+    df = df.copy()
+    for col in signature.inputs.inputs:
+        name = col.name
+        if name not in df.columns:
+            continue
+        dtype = col.type
+        if dtype in (DataType.double, DataType.float):
+            df[name] = pd.to_numeric(df[name], errors='coerce').astype('float64')
+        elif dtype == DataType.string:
+            df[name] = df[name].astype(str)
+        elif dtype in (DataType.long, DataType.integer):
+            df[name] = pd.to_numeric(df[name], errors='coerce').astype('int64')
+    return df
+
+features_reg = enforce_schema(features_reg, reg.metadata.signature)
+features_cls = enforce_schema(features_cls, cls.metadata.signature)
+
+# --- Batch‑Predictions -----------------------------------------------------
 print("Führe Batch‑Predictions durch ...")
-reg_preds = reg.predict(features)
-cls_preds = cls.predict(features)
+reg_preds = reg.predict(features_reg)
+cls_preds = cls.predict(features_cls)
 
 # --- In Datenbank schreiben ------------------------------------------------
 print("Schreibe in api.predictions ...")
 with engine.connect() as conn:
-    for i, row in features.iterrows():
+    for i, row_all in features_all.iterrows():
         uid = uids[i] if i in uids.index else None
+        gt_json = json.dumps({
+            "arr_delay_minutes": float(true_reg[i]),
+            "arr_del15": int(true_class[i])
+        })
         conn.execute(
             text("""
                 INSERT INTO api.predictions
                     (flight_uid, input_features, prediction_reg, prediction_class,
-                     model_version_reg, model_version_class)
-                VALUES (:uid, :feat, :reg, :cls, 'regressor@champion', 'classifier@champion')
+                     model_version_reg, model_version_class, ground_truth)
+                VALUES (:uid, :feat, :reg, :cls, 'regressor@champion', 'classifier@champion', :gt)
             """),
             {
                 "uid": uid,
-                "feat": json.dumps(row.to_dict()),
+                "feat": json.dumps(row_all.to_dict()),
                 "reg": float(reg_preds[i]),
                 "cls": int(cls_preds[i]),
+                "gt": gt_json,
             }
         )
     conn.commit()
 
-print(f"{len(features)} Predictions in api.predictions geschrieben.")
+print(f"{len(features_all)} Predictions in api.predictions geschrieben.")

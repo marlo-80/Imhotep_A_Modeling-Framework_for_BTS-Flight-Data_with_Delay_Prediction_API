@@ -11,6 +11,7 @@ from mlflow.tracking import MlflowClient
 from sqlalchemy import create_engine, text
 
 from flows.config import API_MODELS
+from prometheus_client import Gauge, Counter
 
 # --- Umgebungsvariablen ---------------------------------------------------
 MLFLOW_TRACKING_URI = os.environ.get("MLFLOW_TRACKING_URI", "http://mlflow:5000")
@@ -41,6 +42,41 @@ async def lifespan(app: FastAPI):
             setattr(app.state, f"{task}_pipeline", None)
             setattr(app.state, f"{task}_version", "not_loaded")
 
+    # Champion‑Baselines aus MLflow laden
+    try:
+        for model_name in ['regressor', 'classifier']:
+            mv = client.get_model_version_by_alias(model_name, 'champion')
+            run = client.get_run(mv.run_id)
+            metrics = run.data.metrics
+            if model_name == 'regressor':
+                CHAMPION_REGRESSOR_RMSE.set(metrics.get('rmse', 0.0))
+                CHAMPION_REGRESSOR_MAE.set(metrics.get('mae', 0.0))
+            else:
+                CHAMPION_CLASSIFIER_F1.set(metrics.get('f1', 0.0))
+                CHAMPION_CLASSIFIER_ROC_AUC.set(metrics.get('roc_auc', 0.0))
+                CHAMPION_CLASSIFIER_ACCURACY.set(metrics.get('accuracy', 0.0))
+                CHAMPION_CLASSIFIER_PRECISION.set(metrics.get('precision', 0.0))
+                CHAMPION_CLASSIFIER_RECALL.set(metrics.get('recall', 0.0))
+        print("Champion‑Baselines aus MLflow geladen.")
+    except Exception as e:
+        print(f"WARNUNG: Konnte Champion‑Baselines nicht laden – {e}")
+
+    # Zeilenanzahlen initial setzen
+    with engine.connect() as conn:
+        TRAIN_ROWS.set(conn.execute(text("SELECT COUNT(*) FROM dbt_staging.flights_subset_pre_covid")).scalar())
+        PREDICTION_ROWS.set(conn.execute(text("SELECT COUNT(*) FROM api.predictions")).scalar())
+
+    # Modell-Alter berechnen
+    from datetime import datetime, timezone
+    try:
+        reg_mv = client.get_model_version_by_alias('regressor', 'champion')
+        reg_run = client.get_run(reg_mv.run_id)
+        start_time = reg_run.info.start_time / 1000.0  # ms -> s
+        age_seconds = datetime.now(timezone.utc).timestamp() - start_time
+        MODEL_AGE_HOURS.set(age_seconds / 3600.0)
+    except Exception:
+        MODEL_AGE_HOURS.set(0.0)
+
     yield
 
     # Aufräumen
@@ -56,6 +92,47 @@ app = FastAPI(
     lifespan=lifespan,
 )
 Instrumentator().instrument(app).expose(app)
+
+# --- Prometheus Metriken ---------------------------------------------------
+DRIFT_SCORE = Gauge("data_drift_score", "Overall data drift score (0=no drift, 1=full drift)")
+DRIFT_ACTUAL_RATE = Gauge("prediction_drift_actual_rate", "Actual fraction of delayed flights in current batch")
+DRIFT_PREDICTED_RATE = Gauge("prediction_drift_predicted_rate", "Predicted fraction of delayed flights in current batch")
+DRIFT_RATE_DELTA = Gauge("prediction_drift_rate_delta", "Predicted Delay Rate minus Actual Delay Rate")
+DRIFT_CLASS_F1 = Gauge("prediction_drift_class_f1", "F1-Score des Klassifikators im aktuellen Batch")
+DRIFT_CLASS_ROC_AUC = Gauge("prediction_drift_class_roc_auc", "ROC-AUC des Klassifikators im aktuellen Batch")
+DRIFT_CLASS_ACCURACY = Gauge("prediction_drift_class_accuracy", "Accuracy des Klassifikators im aktuellen Batch")
+DRIFT_CLASS_PRECISION = Gauge("prediction_drift_class_precision", "Precision des Klassifikators im aktuellen Batch")
+DRIFT_CLASS_RECALL = Gauge("prediction_drift_class_recall", "Recall des Klassifikators im aktuellen Batch")
+DRIFT_CLASS_SPECIFICITY = Gauge("prediction_drift_class_specificity", "Specificity (True Negative Rate) des Klassifikators im aktuellen Batch")
+DRIFT_MAE = Gauge("prediction_drift_mae", "Mean Absolute Error between regression prediction and actual")
+DRIFT_REGRESSOR_RMSE = Gauge("prediction_drift_rmse", "RMSE des Regressors im aktuellen Batch")
+
+# Champion-Baselines für den Regressor
+CHAMPION_REGRESSOR_RMSE = Gauge("champion_regressor_rmse", "RMSE des aktuellen Champion-Regressors")
+CHAMPION_REGRESSOR_MAE  = Gauge("champion_regressor_mae",  "MAE des aktuellen Champion-Regressors")
+
+# Champion-Baselines für den Classifier
+CHAMPION_CLASSIFIER_F1      = Gauge("champion_classifier_f1",      "F1-Score des aktuellen Champion-Classifiers")
+CHAMPION_CLASSIFIER_ROC_AUC = Gauge("champion_classifier_roc_auc", "ROC-AUC des aktuellen Champion-Classifiers")
+CHAMPION_CLASSIFIER_ACCURACY = Gauge("champion_classifier_accuracy", "Accuracy des aktuellen Champion-Classifiers")
+CHAMPION_CLASSIFIER_PRECISION = Gauge("champion_classifier_precision", "Precision des aktuellen Champion-Classifiers")
+CHAMPION_CLASSIFIER_RECALL    = Gauge("champion_classifier_recall",    "Recall des aktuellen Champion-Classifiers")
+
+# Zeilenanzahlen
+TRAIN_ROWS = Gauge("train_rows", "Anzahl Zeilen im Trainingsdatensatz")
+PREDICTION_ROWS = Gauge("prediction_rows", "Anzahl Zeilen in api.predictions")
+
+# Flughafen mit den meisten Verspätungen
+TOP_DELAY_AIRPORT = Gauge("top_delay_airport_id", "Origin‑Airport‑ID mit den meisten Verspätungen im aktuellen Batch")
+
+# Modell-Alter
+MODEL_AGE_HOURS = Gauge("model_age_hours", "Age of the current champion regressor in hours")
+
+# Top Airlines (mit Labels)
+TOP_AIRLINE_DELAY_RATE = Gauge("top_airline_delay_rate", "Predicted delay rate per airline", ["rank", "airline"])
+
+# Prediction Throughput Counter
+PREDICTION_COUNT = Counter("predictions_total", "Total number of prediction requests served")
 
 
 class PredictionOutput(BaseModel):
@@ -73,6 +150,7 @@ async def predict(request: Request):
     try:
         input_data = await request.json()
         flight_uid = input_data.pop("flight_uid", None)
+        ground_truth = input_data.pop("ground_truth", None)
         df = pd.DataFrame([input_data])
 
         # Regression
@@ -93,9 +171,9 @@ async def predict(request: Request):
                 text("""
                     INSERT INTO api.predictions
                         (flight_uid, input_features, prediction_reg, prediction_class,
-                         model_version_reg, model_version_class)
+                         model_version_reg, model_version_class, ground_truth)
                     VALUES (:flight_uid, :features, :pred_reg, :pred_class,
-                            :version_reg, :version_class)
+                            :version_reg, :version_class, :gt)
                 """),
                 {
                     "flight_uid": flight_uid,
@@ -104,9 +182,12 @@ async def predict(request: Request):
                     "pred_class": int(class_pred),
                     "version_reg": app.state.regression_version,
                     "version_class": app.state.classification_version,
+                    "gt": json.dumps(ground_truth) if ground_truth else None,
                 }
             )
             conn.commit()
+
+        PREDICTION_COUNT.inc()
 
         return PredictionOutput(
             regression_prediction=float(reg_pred),
@@ -132,6 +213,62 @@ async def reload_model():
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Reload failed for {task}: {e}")
     return {"status": "reloaded"}
+
+@app.post("/admin/drift-metrics")
+async def update_drift_metrics(data: dict):
+    try:
+        DRIFT_SCORE.set(float(data.get("drift_score", 0.0)))
+        DRIFT_MAE.set(float(data.get("mae", 0.0)))
+        DRIFT_ACTUAL_RATE.set(float(data.get("actual_rate", 0.0)))
+        DRIFT_PREDICTED_RATE.set(float(data.get("predicted_rate", 0.0)))
+        DRIFT_CLASS_F1.set(float(data.get("class_f1", 0.0)))
+        DRIFT_CLASS_ROC_AUC.set(float(data.get("class_roc_auc", 0.0)))
+        DRIFT_RATE_DELTA.set(float(data.get("rate_delta", 0.0)))
+        DRIFT_REGRESSOR_RMSE.set(float(data.get("rmse", 0.0)))
+        DRIFT_CLASS_ACCURACY.set(float(data.get("class_accuracy", 0.0)))
+        DRIFT_CLASS_PRECISION.set(float(data.get("class_precision", 0.0)))
+        DRIFT_CLASS_RECALL.set(float(data.get("class_recall", 0.0)))
+        DRIFT_CLASS_SPECIFICITY.set(float(data.get("class_specificity", 0.0)))
+        TOP_DELAY_AIRPORT.set(float(data.get("top_delay_airport", 0.0)))
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/admin/champion-metrics")
+async def update_champion_metrics(data: dict):
+    """Setzt die Referenz-Metriken des aktuellen Champions (für Vergleichslinien in Grafana)."""
+    try:
+        CHAMPION_REGRESSOR_RMSE.set(float(data.get("regressor_rmse", 0.0)))
+        CHAMPION_REGRESSOR_MAE.set(float(data.get("regressor_mae", 0.0)))
+
+        CHAMPION_CLASSIFIER_F1.set(float(data.get("classifier_f1", 0.0)))
+        CHAMPION_CLASSIFIER_ROC_AUC.set(float(data.get("classifier_roc_auc", 0.0)))
+        CHAMPION_CLASSIFIER_ACCURACY.set(float(data.get("classifier_accuracy", 0.0)))
+        CHAMPION_CLASSIFIER_PRECISION.set(float(data.get("classifier_precision", 0.0)))
+        CHAMPION_CLASSIFIER_RECALL.set(float(data.get("classifier_recall", 0.0)))
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/admin/data-stats")
+async def update_data_stats():
+    with engine.connect() as conn:
+        TRAIN_ROWS.set(conn.execute(text("SELECT COUNT(*) FROM dbt_staging.flights_subset_pre_covid")).scalar())
+        PREDICTION_ROWS.set(conn.execute(text("SELECT COUNT(*) FROM api.predictions")).scalar())
+    return {"status": "ok"}
+
+
+@app.post("/admin/top-airlines")
+async def update_top_airlines(data: dict):
+    airlines = data.get("airlines", [])
+    for entry in airlines:
+        TOP_AIRLINE_DELAY_RATE.labels(
+            rank=str(entry["rank"]),
+            airline=entry["airline"]
+        ).set(entry["rate"])
+    return {"status": "ok"}
 
 
 @app.get("/health")
