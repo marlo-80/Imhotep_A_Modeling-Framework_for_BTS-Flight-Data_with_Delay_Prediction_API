@@ -216,5 +216,62 @@ docker compose -f docker/compose.yml exec -e PYTHONPATH=/app api python docker/s
 ```
 
 
+# Helpfull commands:
+
+Deletion of data in api.predictions with index reset
+```bash
+docker compose -f docker/compose.yml exec postgres psql -U vikmar -d fastapi_db -c "TRUNCATE TABLE api.predictions RESTART IDENTITY;"
+```
 
 
+Deletion of data in api.predictions without index reset
+```bash
+docker compose -f docker/compose.yml exec postgres psql -U vikmar -d fastapi_db -c "TRUNCATE TABLE api.predictions;"
+```
+
+Query size of api.predictions
+```bash
+docker compose -f docker/compose.yml exec postgres psql -U vikmar -d fastapi_db -c "SELECT COUNT(*) FROM api.predictions;"  
+```
+
+Query drift score directly from prometheus
+```bash
+curl -s "http://localhost:9090/api/v1/query?query=data_drift_score"    
+```
+
+
+
+
+
+
+docker compose -f docker/compose.yml exec api python -c "
+import mlflow, requests, json
+from mlflow.tracking import MlflowClient
+mlflow.set_tracking_uri('http://mlflow:5000')
+client = MlflowClient()
+
+payload = {}
+for model_name in ['regressor', 'classifier']:
+    try:
+        mv = client.get_model_version_by_alias(model_name, 'champion')
+        run = client.get_run(mv.run_id)
+        metrics = run.data.metrics
+        if model_name == 'regressor':
+            payload['regressor_rmse'] = metrics.get('rmse', 0.0)
+            payload['regressor_mae']  = metrics.get('mae', 0.0)
+        else:
+            payload['classifier_f1']       = metrics.get('f1', 0.0)
+            payload['classifier_roc_auc']  = metrics.get('roc_auc', 0.0)
+            payload['classifier_accuracy'] = metrics.get('accuracy', 0.0)
+            payload['classifier_precision'] = metrics.get('precision', 0.0)
+            payload['classifier_recall']   = metrics.get('recall', 0.0)
+    except Exception as e:
+        print(f'{model_name}: Fehler – {e}')
+
+if payload:
+    r = requests.post('http://api:8000/admin/champion-metrics', json=payload, timeout=5)
+    print(f'Setzen der Champion-Metriken: {r.status_code}')
+    print(json.dumps(payload, indent=2))
+else:
+    print('Keine Metriken gefunden.')
+"
