@@ -94,7 +94,7 @@ async def lifespan(app: FastAPI):
             gauge.set(0.0)
 
     # ----- Drift‑Baseline (konstant) -----
-    DRIFT_BASELINE.set(0.05)
+    #DRIFT_BASELINE.set(0.05)
 
     yield
 
@@ -164,6 +164,7 @@ MODEL_LOAD_DURATION_SECONDS = Gauge("model_load_duration_seconds", "Time to load
 
 ### Ganz neu!
 DRIFT_BASELINE_DYNAMIC = Gauge("drift_baseline_dynamic", "Monatlich angepasste Drift-Baseline")
+
 @app.post("/admin/baseline")
 async def set_baseline(data: dict):
     """Setzt die dynamische Baseline (für Demo‑Zwecke)."""

@@ -37,6 +37,7 @@ services:
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana_data:/var/lib/grafana
+      - ./files/grafana:/etc/grafana
     networks:
       - mle_network
     restart: unless-stopped       
@@ -199,6 +200,7 @@ networks:
 volumes:
   postgres_data:
   grafana_data:
+  
 
 
 

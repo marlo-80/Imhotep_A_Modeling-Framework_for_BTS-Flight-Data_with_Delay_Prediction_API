@@ -61,6 +61,16 @@ def load_current_features():
     return records
 
 
+    # Faire Referenz: Reduziere den größeren Datensatz auf die Größe des kleineren
+    min_len = min(len(reference), len(current))
+    if len(reference) > min_len:
+        reference = reference.sample(n=min_len, random_state=42)
+    if len(current) > min_len:
+        current = current.sample(n=min_len, random_state=24)
+
+    print(f"Angeglichene Größen: Referenz {len(reference)}, Aktuell {len(current)}")
+
+
 @task
 def compute_drift_report(reference: pd.DataFrame, current: pd.DataFrame) -> Report:
     """Erstellt einen Evidently Data Drift Report."""
