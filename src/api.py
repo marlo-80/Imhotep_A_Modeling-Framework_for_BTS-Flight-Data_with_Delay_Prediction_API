@@ -77,7 +77,7 @@ async def lifespan(app: FastAPI):
 
     # ----- Zeilenanzahlen initial setzen -----
     with engine.connect() as conn:
-        TRAIN_ROWS.set(conn.execute(text("SELECT COUNT(*) FROM dbt_staging.flights_subset_pre_covid")).scalar())
+        TRAIN_ROWS.set(conn.execute(text("SELECT COUNT(*) FROM dbt_staging.retrain")).scalar())
         PREDICTION_ROWS.set(conn.execute(text("SELECT COUNT(*) FROM api.predictions")).scalar())
 
     # ----- Modell‑Alter berechnen (beide Modelle) -----
@@ -363,7 +363,7 @@ async def update_champion_metrics(data: dict):
 @app.post("/admin/data-stats")
 async def update_data_stats():
     with engine.connect() as conn:
-        TRAIN_ROWS.set(conn.execute(text("SELECT COUNT(*) FROM dbt_staging.flights_subset_pre_covid")).scalar())
+        TRAIN_ROWS.set(conn.execute(text("SELECT COUNT(*) FROM dbt_staging.retrain")).scalar())
         PREDICTION_ROWS.set(conn.execute(text("SELECT COUNT(*) FROM api.predictions")).scalar())
     return {"status": "ok"}
 
@@ -382,32 +382,31 @@ async def update_top_airlines(data: dict):
 @app.post("/admin/baseline")
 async def set_baseline(data: dict):
     """Setzt die dynamische Baseline (für Demo‑Zwecke)."""
-    value = float(data.get("value", 0.05))
+    value = float(data.get("value", 0.15))
     DRIFT_BASELINE_DYNAMIC.set(value)
     return {"status": "ok", "baseline": value}
 
 
 @app.post("/admin/retrain")
 async def trigger_retrain():
-    """Schreibt Predictions in die Trainingsbasis und startet dann das Retraining."""
+    """Hängt die aktuellen Predictions an die Tabelle dbt_staging.retrain an, löscht sie dann und startet Retraining."""
     import subprocess
     from sqlalchemy import text as sa_text
-    from flows.config import DRIFT_RETRAIN_REG   # für den Tabellennamen
 
-    target_table = DRIFT_RETRAIN_REG["target_table"]   # z. B. "dbt_staging.training_with_drift"
+    target_table = "retrain"                    # Fester Tabellenname
+    full_table = f"dbt_staging.{target_table}"  # dbt_staging.retrain
 
     with engine.connect() as conn:
-        # Prüfen, ob die Zieltabelle existiert – falls nicht, aus pre_covid_test erstellen
+        # 1. Tabelle anlegen, falls nicht vorhanden (Struktur aus pre_covid_test kopieren)
         exists = conn.execute(
             sa_text("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema='dbt_staging' AND table_name=:tbl)"),
             {"tbl": target_table}
         ).scalar()
         if not exists:
-            conn.execute(sa_text(f"CREATE TABLE dbt_staging.{target_table} (LIKE dbt_staging.pre_covid_test)"))
-            conn.execute(sa_text(f"INSERT INTO dbt_staging.{target_table} SELECT * FROM dbt_staging.pre_covid_test"))
+            conn.execute(sa_text(f"CREATE TABLE {full_table} (LIKE dbt_staging.pre_covid_test)"))
             conn.commit()
 
-        # Spaltenstruktur der Zieltabelle abrufen
+        # 2. Spaltenstruktur ermitteln
         cols = conn.execute(
             sa_text(f"SELECT column_name, data_type FROM information_schema.columns WHERE table_schema='dbt_staging' AND table_name=:tbl ORDER BY ordinal_position"),
             {"tbl": target_table}
@@ -437,8 +436,9 @@ async def trigger_retrain():
                 cast = type_cast_map.get(pg_type, 'text')
                 select_parts.append(f"(input_features->>'{col_name}')::{cast}")
 
+        # 3. Aktuelle Predictions an die Tabelle anhängen
         insert_sql = f"""
-            INSERT INTO {target_table} ({', '.join(col_names)})
+            INSERT INTO {full_table} ({', '.join(col_names)})
             SELECT {', '.join(select_parts)}
             FROM api.predictions
             WHERE ground_truth IS NOT NULL
@@ -446,7 +446,11 @@ async def trigger_retrain():
         conn.execute(sa_text(insert_sql))
         conn.commit()
 
-    # Training starten
+        # 4. Predictions löschen, damit sie beim nächsten Mal nicht doppelt eingefügt werden
+        conn.execute(sa_text("TRUNCATE TABLE api.predictions RESTART IDENTITY"))
+        conn.commit()
+
+    # 5. Retraining asynchron starten
     def run_training(config_name):
         subprocess.Popen(
             ["python", "flows/train_flow.py", config_name],
@@ -456,7 +460,7 @@ async def trigger_retrain():
 
     run_training("DRIFT_RETRAIN_REG")
     run_training("DRIFT_RETRAIN_CLASS")
-    return {"status": "retraining_started", "message": "Predictions inserted, training launched."}
+    return {"status": "retraining_started", "message": "Predictions appended to dbt_staging.retrain, predictions cleared, training launched."}
 
 
 @app.post("/admin/retrain-status")

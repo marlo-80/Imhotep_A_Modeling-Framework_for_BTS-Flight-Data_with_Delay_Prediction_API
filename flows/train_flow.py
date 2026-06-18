@@ -115,6 +115,7 @@ def promote_if_better(config: dict, new_score: float, run_id: str, artifact_name
         # Drift‑Alarm zurücksetzen, weil ein neuer Champion gesetzt wurde
         try:
             requests.post("http://api:8000/admin/drift-alarm", json={"active": 0}, timeout=5)
+            
             print("Drift-Alarm zurückgesetzt.")
         except Exception as e:
             print(f"Fehler beim Zurücksetzen des Drift-Alarms: {e}")
